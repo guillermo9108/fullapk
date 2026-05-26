@@ -3,6 +3,7 @@ package com.example
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.content.pm.PackageManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -52,7 +53,9 @@ class MainActivity : ComponentActivity() {
                         list.add(android.Manifest.permission.READ_MEDIA_AUDIO)
                     } else {
                         list.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-                        list.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                            list.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        }
                     }
                     list
                 }
@@ -64,11 +67,15 @@ class MainActivity : ComponentActivity() {
                 }
 
                 LaunchedEffect(Unit) {
-                    val ungranted = permissions.filter {
-                        ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
-                    }
-                    if (ungranted.isNotEmpty()) {
-                        permissionLauncher.launch(ungranted.toTypedArray())
+                    try {
+                        val ungranted = permissions.filter {
+                            ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
+                        }
+                        if (ungranted.isNotEmpty() && !isFinishing && !isDestroyed) {
+                            permissionLauncher.launch(ungranted.toTypedArray())
+                        }
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error requesting permissions checklist: ${e.message}", e)
                     }
                 }
 
