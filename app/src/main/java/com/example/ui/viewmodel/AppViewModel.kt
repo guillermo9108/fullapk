@@ -73,6 +73,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var lastMediaUrl = ""
     private var lastMediaTime = 0.0
 
+    var currentUserId = ""
+    fun updateUserId(userId: String) {
+        if (userId.isNotBlank() && currentUserId != userId) {
+            currentUserId = userId
+            Log.d("AppViewModel", "Resolved userId from WebView: $userId")
+        }
+    }
+
     fun updateVideoState(title: String, pageUrl: String, videoSrc: String, currentTime: Double, duration: Double, isPlaying: Boolean) {
         viewModelScope.launch(Dispatchers.Main) {
             _isTrackedVideoPlaying.value = isPlaying
@@ -309,6 +317,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     
+                    if (userId.isBlank()) {
+                        userId = currentUserId
+                    }
+                    
                     // 2. Fetch unread notifications
                     val url = "${serverConfig.fullUrl}/api/index.php?action=get_unread_notifications&userId=$userId"
                     val request = Request.Builder()
@@ -367,9 +379,80 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     }
+
+                    // 3. Poll chat messages if userId is available
+                    if (userId.isNotBlank()) {
+                        pollChatMessages(userId, cookies)
+                    }
                 } catch (e: Exception) {
                     Log.e("NotificationPolling", "Polling failed: ${e.message}")
                 }
+            }
+        }
+    }
+
+    private fun pollChatMessages(userId: String, cookies: String) {
+        val actions = listOf("get_unread_messages", "get_unread_chat")
+        for (action in actions) {
+            try {
+                val url = "${serverConfig.fullUrl}/api/index.php?action=$action&userId=$userId"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Cookie", cookies)
+                    .header("User-Agent", "StreamPayAPK/1.0")
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val bodyString = response.body?.string() ?: ""
+                        val adapter = moshi.adapter(Map::class.java)
+                        val responseMap = adapter.fromJson(bodyString) as? Map<String, Any>?
+                        val success = responseMap?.get("success") as? Boolean ?: false
+                        if (success) {
+                            val dataList = responseMap["data"] as? List<Map<String, Any>>
+                            if (dataList != null && dataList.isNotEmpty()) {
+                                val maxPolledChat = serverConfig.lastPolledChatTime
+                                var newMaxChat = maxPolledChat
+                                for (item in dataList) {
+                                    val text = item["text"] as? String
+                                        ?: item["message"] as? String
+                                        ?: item["content"] as? String
+                                        ?: item["body"] as? String ?: ""
+                                    if (text.isBlank()) continue
+                                    
+                                    val sender = item["sender"] as? String
+                                        ?: item["username"] as? String
+                                        ?: item["from_user"] as? String ?: "Chat"
+                                        
+                                    val id = when (val rawId = item["id"]) {
+                                        is Double -> rawId.toLong().toString()
+                                        is Long -> rawId.toString()
+                                        is Int -> rawId.toString()
+                                        else -> rawId?.toString() ?: ""
+                                    }
+                                    val timestampSec = when (val rawTime = item["timestamp"]) {
+                                        is Double -> rawTime.toLong()
+                                        is Long -> rawTime
+                                        is Int -> rawTime.toLong()
+                                        is String -> rawTime.toLongOrNull() ?: 0L
+                                        else -> 0L
+                                    }
+                                    if (timestampSec > maxPolledChat) {
+                                        if (timestampSec > newMaxChat) {
+                                            newMaxChat = timestampSec
+                                        }
+                                        showSystemNotification(id.hashCode() + 100000, "StreamPay Chat: $sender", text)
+                                    }
+                                }
+                                if (newMaxChat > maxPolledChat) {
+                                    serverConfig.lastPolledChatTime = newMaxChat
+                                }
+                                break // If successful, skip other redundant endpoints
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ChatPolling", "Chat polling action $action failed: ${e.message}")
             }
         }
     }

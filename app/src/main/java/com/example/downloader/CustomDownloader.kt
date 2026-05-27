@@ -38,6 +38,7 @@ class CustomDownloader(
         )
         downloadDao.insertDownload(initialItem)
         
+        var finalFilename = filename
         withContext(Dispatchers.IO) {
             try {
                 val url = URL(downloadUrl)
@@ -51,10 +52,74 @@ class CustomDownloader(
                 if (connection.responseCode !in 200..299) {
                     throw Exception("Server returned HTTP ${connection.responseCode}")
                 }
+
+                // Resolve filename and extension from headers
+                val disposition = connection.getHeaderField("Content-Disposition")
+                val contentType = connection.getHeaderField("Content-Type")
+                
+                var ext: String? = null
+                if (contentType != null) {
+                    ext = when {
+                        contentType.startsWith("video/mp4", ignoreCase = true) -> "mp4"
+                        contentType.startsWith("video/webm", ignoreCase = true) -> "webm"
+                        contentType.startsWith("video/ogg", ignoreCase = true) -> "ogv"
+                        contentType.startsWith("video/3gpp", ignoreCase = true) -> "3gp"
+                        contentType.startsWith("video/quicktime", ignoreCase = true) -> "mov"
+                        contentType.startsWith("video/x-matroska", ignoreCase = true) -> "mkv"
+                        contentType.startsWith("video/", ignoreCase = true) -> {
+                            val subtype = contentType.substringAfter("video/").substringBefore(";").trim()
+                            if (subtype.isNotBlank() && subtype.length < 5) subtype else "mp4"
+                        }
+                        contentType.startsWith("audio/mpeg", ignoreCase = true) -> "mp3"
+                        contentType.startsWith("audio/ogg", ignoreCase = true) -> "ogg"
+                        contentType.startsWith("audio/wav", ignoreCase = true) -> "wav"
+                        contentType.startsWith("audio/webm", ignoreCase = true) -> "weba"
+                        contentType.startsWith("audio/aac", ignoreCase = true) -> "aac"
+                        contentType.startsWith("audio/flac", ignoreCase = true) -> "flac"
+                        contentType.startsWith("audio/", ignoreCase = true) -> {
+                            val subtype = contentType.substringAfter("audio/").substringBefore(";").trim()
+                            if (subtype.isNotBlank() && subtype.length < 5) subtype else "mp3"
+                        }
+                        contentType.startsWith("image/jpeg", ignoreCase = true) -> "jpg"
+                        contentType.startsWith("image/png", ignoreCase = true) -> "png"
+                        contentType.startsWith("image/gif", ignoreCase = true) -> "gif"
+                        contentType.startsWith("image/webp", ignoreCase = true) -> "webp"
+                        contentType.startsWith("image/", ignoreCase = true) -> {
+                            val subtype = contentType.substringAfter("image/").substringBefore(";").trim()
+                            if (subtype.isNotBlank() && subtype.length < 5) subtype else "jpg"
+                        }
+                        else -> null
+                    }
+                }
+
+                if (disposition != null) {
+                    val filenameRegex = """filename\*=\s*utf-8''([^;\n]+)|filename=\s*["']?([^;"'\n]+)["']?""".toRegex(RegexOption.IGNORE_CASE)
+                    val match = filenameRegex.find(disposition)
+                    if (match != null) {
+                        val parsed = match.groupValues[1].takeIf { it.isNotBlank() }
+                            ?: match.groupValues[2].takeIf { it.isNotBlank() }
+                        if (parsed != null) {
+                            try {
+                                finalFilename = java.net.URLDecoder.decode(parsed, "UTF-8")
+                            } catch (e: Exception) {
+                                finalFilename = parsed
+                            }
+                        }
+                    }
+                }
+
+                val lowerName = finalFilename.lowercase()
+                if (lowerName == "index.php" || lowerName == "index.html" || lowerName == "index.htm" || finalFilename.isBlank()) {
+                    val nameBase = "streampay_download_${System.currentTimeMillis()}"
+                    finalFilename = if (ext != null) "$nameBase.$ext" else "$nameBase.mp4"
+                } else if (ext != null && (lowerName.endsWith(".php") || !lowerName.contains(".") || lowerName.endsWith(".html") || lowerName.endsWith(".htm"))) {
+                    val baseName = if (finalFilename.contains(".")) finalFilename.substringBeforeLast(".") else finalFilename
+                    finalFilename = "$baseName.$ext"
+                }
                 
                 val totalSize = connection.contentLengthLong
                 val inputStream = connection.inputStream
-
+ 
                 // Determine destination directory based on ServerConfig
                 val serverConfig = com.example.data.pref.ServerConfig(context)
                 val destDir = if (serverConfig.downloadLocation == com.example.data.pref.ServerConfig.VAL_LOCATION_SD_CARD) {
@@ -62,9 +127,9 @@ class CustomDownloader(
                 } else {
                     context.filesDir
                 }
-
+ 
                 // Save to selected directory
-                val outputFile = File(destDir, filename)
+                val outputFile = File(destDir, finalFilename)
                 val outputStream = FileOutputStream(outputFile)
                 
                 val buffer = ByteArray(8192)
@@ -89,7 +154,7 @@ class CustomDownloader(
                         lastProgressUpdate = now
                         val updatedItem = DownloadItem(
                             id = id,
-                            filename = filename,
+                            filename = finalFilename,
                             url = downloadUrl,
                             timestamp = initialItem.timestamp,
                             sizeBytes = totalBytesRead,
@@ -108,7 +173,7 @@ class CustomDownloader(
                 // Completed State
                 val completedItem = DownloadItem(
                     id = id,
-                    filename = filename,
+                    filename = finalFilename,
                     url = downloadUrl,
                     timestamp = initialItem.timestamp,
                     sizeBytes = outputFile.length(),
@@ -122,7 +187,7 @@ class CustomDownloader(
                 Log.e("CustomDownloader", "Download failure: ${e.message}", e)
                 val failedItem = DownloadItem(
                     id = id,
-                    filename = filename,
+                    filename = finalFilename,
                     url = downloadUrl,
                     timestamp = initialItem.timestamp,
                     sizeBytes = 0,
@@ -140,7 +205,7 @@ class CustomDownloader(
                     } else {
                         context.filesDir
                     }
-                    val partFile = File(destDir, filename)
+                    val partFile = File(destDir, finalFilename)
                     if (partFile.exists()) {
                         partFile.delete()
                     }

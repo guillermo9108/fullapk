@@ -208,13 +208,17 @@ fun WebViewScreen(viewModel: AppViewModel) {
         if (customVideoView != null) {
             // Fullscreen video rendering overlay (Overrides general layout)
             AndroidView(
-                factory = {
-                    FrameLayout(context).apply {
+                factory = { ctx ->
+                    FrameLayout(ctx).apply {
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
                         setBackgroundColor(AndroidColor.BLACK)
+                        
+                        // Detach customVideoView from any existing parent first to prevent crashes
+                        (customVideoView?.parent as? ViewGroup)?.removeView(customVideoView)
+                        
                         addView(customVideoView)
                     }
                 },
@@ -273,6 +277,9 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                 },
                                 onNoVideo = {
                                     viewModel.clearVideoState()
+                                },
+                                onUserResolved = { userId ->
+                                    viewModel.updateUserId(userId)
                                 }
                             ), "AndroidVideoBridge")
 
@@ -290,11 +297,38 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                     isWebLoading = false
                                     webProgress = 100
 
-                                    // Inject high-fidelity HTML5 video tracking bridge
+                                    // Inject high-fidelity HTML5 video tracking bridge & user identity resolver
                                     view?.evaluateJavascript("""
                                         (function() {
-                                            if (window.videoBridgeInjected) return;
+                                            if (window.videoBridgeInjected) {
+                                                try { window.tryResolveUserId(); } catch(e) {}
+                                                return;
+                                            }
                                             window.videoBridgeInjected = true;
+
+                                            function tryResolveUserId() {
+                                                var userId = "";
+                                                try {
+                                                    userId = localStorage.getItem('userId') || localStorage.getItem('user_id') || localStorage.getItem('uid') || localStorage.getItem('id');
+                                                    if (!userId) {
+                                                        userId = sessionStorage.getItem('userId') || sessionStorage.getItem('user_id');
+                                                    }
+                                                } catch(e) {}
+                                                if (!userId) {
+                                                    userId = window.userId || window.user_id || (window.currentUser && window.currentUser.id) || (window.user && window.user.id);
+                                                }
+                                                if (!userId) {
+                                                    var meta = document.querySelector('meta[name="user-id"], meta[name="userId"]');
+                                                    if (meta) userId = meta.content;
+                                                }
+                                                if (userId) {
+                                                    window.AndroidVideoBridge.onUserResolved(userId.toString());
+                                                }
+                                            }
+                                            window.tryResolveUserId = tryResolveUserId;
+
+                                            tryResolveUserId();
+                                            setInterval(tryResolveUserId, 4000);
 
                                             function getTrackedTitle() {
                                                 var title = "";
@@ -365,9 +399,9 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                     customVideoView = view
                                     customVideoCallback = callback
 
-                                    // Auto change to landscape for full screen videos
+                                    // Auto change to vertical or horizontal sensor rotation automatically according to video size
                                     if (context is Activity) {
-                                        context.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                        context.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
                                     }
                                 }
 
@@ -385,11 +419,18 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                 }
                             }
 
+                            // Optimize rendering hardware layer
+                            setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+
                             // Essential specifications
                             settings.apply {
                                 javaScriptEnabled = true
                                 domStorageEnabled = true
                                 databaseEnabled = true
+                                loadsImagesAutomatically = true
+                                mediaPlaybackRequiresUserGesture = false
+                                allowFileAccess = true
+                                allowContentAccess = true
                                 
                                 // Support offline cache persistence
                                 val hasNetwork = isNetworkAvailable(ctx)
@@ -398,7 +439,9 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                                 useWideViewPort = true
                                 loadWithOverviewMode = true
-                                userAgentString = "StreamPayAPK/1.0"
+                                
+                                val defaultUserAgent = userAgentString
+                                userAgentString = if (defaultUserAgent.isNullOrBlank()) "StreamPayAPK/1.0" else "$defaultUserAgent StreamPayAPK/1.0"
                             }
 
                             // Cookie persistence
@@ -702,7 +745,8 @@ fun isNetworkAvailable(context: android.content.Context): Boolean {
 
 class VideoBridge(
     private val onStateChanged: (title: String, pageUrl: String, videoSrc: String, currentTime: Double, duration: Double, isPlaying: Boolean) -> Unit,
-    private val onNoVideo: () -> Unit
+    private val onNoVideo: () -> Unit,
+    private val onUserResolved: (userId: String) -> Unit
 ) {
     @android.webkit.JavascriptInterface
     fun onVideoStateChanged(title: String, pageUrl: String, videoSrc: String, currentTime: Double, duration: Double, isPlaying: Boolean) {
@@ -712,6 +756,11 @@ class VideoBridge(
     @android.webkit.JavascriptInterface
     fun onNoVideo() {
         onNoVideo()
+    }
+
+    @android.webkit.JavascriptInterface
+    fun onUserResolved(userId: String) {
+        onUserResolved(userId)
     }
 }
 

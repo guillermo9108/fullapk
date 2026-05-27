@@ -29,6 +29,10 @@ class ServerConfig(context: Context) {
         get() = prefs.getLong("last_polled_notification_time", 0L)
         set(value) = prefs.edit().putLong("last_polled_notification_time", value).apply()
 
+    var lastPolledChatTime: Long
+        get() = prefs.getLong("last_polled_chat_time", 0L)
+        set(value) = prefs.edit().putLong("last_polled_chat_time", value).apply()
+
     var ipAddress: String
         get() = prefs.getString(KEY_IP_ADDRESS, DEFAULT_IP) ?: DEFAULT_IP
         set(value) = prefs.edit().putString(KEY_IP_ADDRESS, value).apply()
