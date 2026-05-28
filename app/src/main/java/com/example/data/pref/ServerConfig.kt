@@ -12,6 +12,9 @@ class ServerConfig(context: Context) {
         private const val KEY_FULL_URL = "full_url"
         private const val KEY_IS_CONFIGURED = "is_configured"
         private const val KEY_DOWNLOAD_LOCATION = "download_location"
+        private const val KEY_KEEP_CACHE = "keep_cache"
+        private const val KEY_CACHE_CLEAN_INTERVAL = "cache_clean_interval"
+        private const val KEY_LAST_CACHE_CLEAN = "last_cache_clean_time"
         
         // Defaults to demo or empty
         private const val DEFAULT_IP = "192.168.1.100"
@@ -61,6 +64,18 @@ class ServerConfig(context: Context) {
     var isConfigured: Boolean
         get() = prefs.getBoolean(KEY_IS_CONFIGURED, false)
         set(value) = prefs.edit().putBoolean(KEY_IS_CONFIGURED, value).apply()
+
+    var keepCache: Boolean
+        get() = prefs.getBoolean(KEY_KEEP_CACHE, true) // enabled by default to save 100% of user views
+        set(value) = prefs.edit().putBoolean(KEY_KEEP_CACHE, value).apply()
+
+    var cacheCleanInterval: String
+        get() = prefs.getString(KEY_CACHE_CLEAN_INTERVAL, "24H") ?: "24H" // 24 hours by default
+        set(value) = prefs.edit().putString(KEY_CACHE_CLEAN_INTERVAL, value).apply()
+
+    var lastCacheCleanTime: Long
+        get() = prefs.getLong(KEY_LAST_CACHE_CLEAN, 0L)
+        set(value) = prefs.edit().putLong(KEY_LAST_CACHE_CLEAN, value).apply()
         
     fun resetConfig() {
         prefs.edit().clear().apply()

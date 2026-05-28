@@ -158,6 +158,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val ipAddressState = MutableStateFlow(serverConfig.ipAddress)
     val portState = MutableStateFlow(serverConfig.port)
     val downloadLocationState = MutableStateFlow(serverConfig.downloadLocation)
+    val keepCacheState = MutableStateFlow(serverConfig.keepCache)
+    val cacheCleanIntervalState = MutableStateFlow(serverConfig.cacheCleanInterval)
 
     // Downloads
     val allDownloads: StateFlow<List<DownloadItem>> = repository.allDownloadsFlow
@@ -169,7 +171,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // Active downloading count
     val activeDownloadsCount: StateFlow<Int> = allDownloads
-        .map { list -> list.count { it.status == "DOWNLOADING" } }
+        .map { list -> list.count { it.status == "DOWNLOADING" || it.status == "QUEUED" } }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -200,12 +202,50 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         ipAddressState.value = ""
         portState.value = ""
         downloadLocationState.value = ServerConfig.VAL_LOCATION_INTERNAL
+        keepCacheState.value = true
+        cacheCleanIntervalState.value = "24H"
         _currentScreen.value = Screen.Configuration
     }
 
     fun saveDownloadLocation(location: String) {
         serverConfig.downloadLocation = location
         downloadLocationState.value = location
+    }
+
+    fun saveKeepCache(keep: Boolean) {
+        serverConfig.keepCache = keep
+        keepCacheState.value = keep
+    }
+
+    fun saveCacheCleanInterval(interval: String) {
+        serverConfig.cacheCleanInterval = interval
+        cacheCleanIntervalState.value = interval
+        // recheck immediately when interval changes
+        checkAndPerformAutoCacheCleaning()
+    }
+
+    fun checkAndPerformAutoCacheCleaning() {
+        val interval = serverConfig.cacheCleanInterval
+        if (interval == "NUNCA") return
+
+        val intervalMs = when (interval) {
+            "1H" -> 3600000L
+            "24H" -> 86400000L
+            "7D" -> 604800000L
+            else -> 86400000L
+        }
+
+        val lastClean = serverConfig.lastCacheCleanTime
+        val now = System.currentTimeMillis()
+        if (lastClean == 0L) {
+            serverConfig.lastCacheCleanTime = now
+        } else if (now - lastClean > intervalMs) {
+            Log.d("AppViewModel", "Auto cache cleaning interval reached ($interval). Executing clear cache...")
+            viewModelScope.launch(Dispatchers.Main) {
+                _webViewCommands.emit(WebViewCommand.CLEAR_CACHE)
+                serverConfig.lastCacheCleanTime = now
+            }
+        }
     }
 
     fun triggerFileDownload(url: String, filename: String? = null) {
@@ -258,6 +298,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         activeInstance = this
         createNotificationChannel()
         startNotificationPolling()
+        checkAndPerformAutoCacheCleaning()
     }
 
     override fun onCleared() {

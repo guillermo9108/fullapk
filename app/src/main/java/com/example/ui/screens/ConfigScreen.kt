@@ -324,6 +324,194 @@ fun ConfigScreen(viewModel: AppViewModel) {
                 }
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Cache Control Card
+            val keepCache by viewModel.keepCacheState.collectAsState()
+            val cacheCleanInterval by viewModel.cacheCleanIntervalState.collectAsState()
+            
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Slate800)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
+                ) {
+                    Text(
+                        text = "Configuración de Caché",
+                        color = Slate200,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    Text(
+                        text = "Guarda localmente el 100% de lo que veas para evitar lentitud en la carga y asegurar caching continuo.",
+                        color = Slate400,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+
+                    // Keep Cache selector row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(
+                            onClick = { viewModel.saveKeepCache(true) },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (keepCache) Indigo500 else Slate700,
+                                contentColor = Slate200
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("cache_keep_enabled_button")
+                        ) {
+                            Text(
+                                text = "Activar",
+                                fontWeight = if (keepCache) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+
+                        Button(
+                            onClick = { viewModel.saveKeepCache(false) },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (!keepCache) Indigo500 else Slate700,
+                                contentColor = Slate200
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .testTag("cache_keep_disabled_button")
+                        ) {
+                            Text(
+                                text = "Desactivar",
+                                fontWeight = if (!keepCache) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+
+                    if (keepCache) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        
+                        Text(
+                            text = "Limpieza Automática cada:",
+                            color = Slate200,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        // 4 options: Nunca, 1H, 24H, 7D
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                val optNever = cacheCleanInterval == "NUNCA"
+                                Button(
+                                    onClick = { viewModel.saveCacheCleanInterval("NUNCA") },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (optNever) Indigo500 else Slate700,
+                                        contentColor = Slate200
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(40.dp)
+                                        .testTag("interval_never_button")
+                                ) {
+                                    Text("Nunca", fontSize = 12.sp, fontWeight = if (optNever) FontWeight.Bold else FontWeight.Normal)
+                                }
+
+                                val opt1h = cacheCleanInterval == "1H"
+                                Button(
+                                    onClick = { viewModel.saveCacheCleanInterval("1H") },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (opt1h) Indigo500 else Slate700,
+                                        contentColor = Slate200
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(40.dp)
+                                        .testTag("interval_1h_button")
+                                ) {
+                                    Text("1 hora", fontSize = 12.sp, fontWeight = if (opt1h) FontWeight.Bold else FontWeight.Normal)
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                val opt24h = cacheCleanInterval == "24H"
+                                Button(
+                                    onClick = { viewModel.saveCacheCleanInterval("24H") },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (opt24h) Indigo500 else Slate700,
+                                        contentColor = Slate200
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(40.dp)
+                                        .testTag("interval_24h_button")
+                                ) {
+                                    Text("24 horas", fontSize = 12.sp, fontWeight = if (opt24h) FontWeight.Bold else FontWeight.Normal)
+                                }
+
+                                val opt7d = cacheCleanInterval == "7D"
+                                Button(
+                                    onClick = { viewModel.saveCacheCleanInterval("7D") },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (opt7d) Indigo500 else Slate700,
+                                        contentColor = Slate200
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(40.dp)
+                                        .testTag("interval_7d_button")
+                                ) {
+                                    Text("7 días", fontSize = 12.sp, fontWeight = if (opt7d) FontWeight.Bold else FontWeight.Normal)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = { viewModel.clearWebCache() },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Transparent,
+                            contentColor = Red500
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, Red500, RoundedCornerShape(12.dp))
+                            .height(46.dp)
+                            .testTag("clear_cache_now_button")
+                    ) {
+                        Text(
+                            text = "Limpiar Todo el Caché Ahora",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // User Info Setup Help Board

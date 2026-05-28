@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.os.Build
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
@@ -116,7 +117,13 @@ fun WebViewScreen(viewModel: AppViewModel) {
             when (command) {
                 WebViewCommand.RELOAD -> webViewRef?.reload()
                 WebViewCommand.CLEAR_CACHE -> {
-                    webViewRef?.clearCache(true)
+                    try {
+                        webViewRef?.clearCache(true)
+                        context.cacheDir?.deleteRecursively()
+                        context.externalCacheDir?.deleteRecursively()
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
                     webViewRef?.reload()
                 }
                 is WebViewCommand.NAVIGATE_AND_SEEK -> {
@@ -432,9 +439,12 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                 allowFileAccess = true
                                 allowContentAccess = true
                                 
-                                // Support offline cache persistence
-                                val hasNetwork = isNetworkAvailable(ctx)
-                                cacheMode = if (hasNetwork) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ONLY
+                                // Use standard cache configuration depending on keepCache preference
+                                cacheMode = if (viewModel.serverConfig.keepCache) {
+                                    WebSettings.LOAD_DEFAULT
+                                } else {
+                                    WebSettings.LOAD_NO_CACHE
+                                }
                                 
                                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                                 useWideViewPort = true
