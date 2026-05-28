@@ -125,14 +125,25 @@ class MediaPlaybackService : Service() {
             builder.addAction(android.R.drawable.ic_media_play, "Reproducir", pendingPlay)
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                builder.build(),
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, builder.build())
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    builder.build(),
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, builder.build())
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MediaPlaybackService", "Failed to startForeground safely caught: ${e.message}", e)
+            // If starting as foreground fails, we can fallback to displaying a system notification manually
+            try {
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                manager?.notify(NOTIFICATION_ID, builder.build())
+            } catch (ex: Exception) {
+                android.util.Log.e("MediaPlaybackService", "Helper notification notify failed", ex)
+            }
         }
     }
 }

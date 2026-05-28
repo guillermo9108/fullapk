@@ -335,9 +335,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (!serverConfig.isConfigured) continue
                 
                 try {
-                    // 1. Resolve userId from CookieManager if available
-                    val cookieManager = android.webkit.CookieManager.getInstance()
-                    val cookies = cookieManager.getCookie(serverConfig.fullUrl) ?: ""
+                    // 1. Resolve userId from CookieManager if available safely on the Main thread
+                    val cookies = try {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            android.webkit.CookieManager.getInstance().getCookie(serverConfig.fullUrl) ?: ""
+                        }
+                    } catch (e: Exception) {
+                        Log.e("NotificationPolling", "CookieManager read failed: ${e.message}")
+                        ""
+                    }
                     
                     var userId = ""
                     if (cookies.isNotEmpty()) {
@@ -360,6 +366,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     
                     if (userId.isBlank()) {
                         userId = currentUserId
+                    }
+                    
+                    if (cookies.isNotEmpty()) {
+                        serverConfig.lastSavedCookies = cookies
+                    }
+                    if (userId.isNotEmpty()) {
+                        serverConfig.lastSavedUserId = userId
                     }
                     
                     // 2. Fetch unread notifications

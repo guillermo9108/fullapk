@@ -22,6 +22,13 @@ import androidx.core.content.ContextCompat
 import com.example.ui.screens.ConfigScreen
 import com.example.ui.screens.DownloadsScreen
 import com.example.ui.screens.WebViewScreen
+import androidx.work.Constraints
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.ExistingPeriodicWorkPolicy
+import java.util.concurrent.TimeUnit
+import com.example.service.NotificationPollingWorker
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.AppViewModel
 import com.example.ui.viewmodel.Screen
@@ -35,6 +42,28 @@ class MainActivity : ComponentActivity() {
         
         // Handle possible multimedia resume intents
         viewModel.handleVideoIntent(intent)
+
+        // Schedule periodic background notification and chat polling worker
+        try {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val pollingRequest = PeriodicWorkRequestBuilder<NotificationPollingWorker>(
+                15, TimeUnit.MINUTES
+            )
+            .setConstraints(constraints)
+            .build()
+
+            WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+                "StreamPayNotificationPolling",
+                ExistingPeriodicWorkPolicy.KEEP,
+                pollingRequest
+            )
+            Log.d("MainActivity", "Successfully enqueued unique periodic polling worker!")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to schedule background WorkManager: ${e.message}", e)
+        }
         
         setContent {
             MyApplicationTheme(darkTheme = true, dynamicColor = false) {
@@ -46,6 +75,8 @@ class MainActivity : ComponentActivity() {
                 // Check and request all missing permissions on first launch / start
                 val permissions = remember {
                     val list = mutableListOf<String>()
+                    list.add(android.Manifest.permission.CAMERA)
+                    list.add(android.Manifest.permission.RECORD_AUDIO)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         list.add(android.Manifest.permission.POST_NOTIFICATIONS)
                         list.add(android.Manifest.permission.READ_MEDIA_IMAGES)

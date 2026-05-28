@@ -17,8 +17,8 @@ class ServerConfig(context: Context) {
         private const val KEY_LAST_CACHE_CLEAN = "last_cache_clean_time"
         
         // Defaults to demo or empty
-        private const val DEFAULT_IP = "192.168.1.100"
-        private const val DEFAULT_PORT = "3001"
+        private const val DEFAULT_IP = "192.168.43.101"
+        private const val DEFAULT_PORT = ""
 
         const val VAL_LOCATION_INTERNAL = "INTERNAL"
         const val VAL_LOCATION_SD_CARD = "SD_CARD"
@@ -35,6 +35,14 @@ class ServerConfig(context: Context) {
     var lastPolledChatTime: Long
         get() = prefs.getLong("last_polled_chat_time", 0L)
         set(value) = prefs.edit().putLong("last_polled_chat_time", value).apply()
+
+    var lastSavedUserId: String
+        get() = prefs.getString("last_saved_user_id", "") ?: ""
+        set(value) = prefs.edit().putString("last_saved_user_id", value).apply()
+
+    var lastSavedCookies: String
+        get() = prefs.getString("last_saved_cookies", "") ?: ""
+        set(value) = prefs.edit().putString("last_saved_cookies", value).apply()
 
     var ipAddress: String
         get() = prefs.getString(KEY_IP_ADDRESS, DEFAULT_IP) ?: DEFAULT_IP

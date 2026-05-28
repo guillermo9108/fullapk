@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -98,6 +99,22 @@ fun WebViewScreen(viewModel: AppViewModel) {
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var webProgress by remember { mutableStateOf(0) }
     var isWebLoading by remember { mutableStateOf(false) }
+
+    // Upload content/file chooser support state and launcher
+    var uploadMessage by remember { mutableStateOf<android.webkit.ValueCallback<Array<android.net.Uri>>?>(null) }
+
+    val filePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents()
+    ) { uris ->
+        if (uploadMessage != null) {
+            if (uris.isNotEmpty()) {
+                uploadMessage?.onReceiveValue(uris.toTypedArray())
+            } else {
+                uploadMessage?.onReceiveValue(null)
+            }
+            uploadMessage = null
+        }
+    }
 
     // Full screen video handling
     var customVideoView by remember { mutableStateOf<View?>(null) }
@@ -297,6 +314,16 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                     isWebLoading = true
                                     webProgress = 10
                                     url?.let { currentUrl = it }
+                                    
+                                    // Inject environment immediately on start to prevent script errors
+                                    view?.evaluateJavascript("""
+                                        window.StreamPayAPK = {
+                                            isAPK: true,
+                                            version: "1.0.1",
+                                            deviceInfo: "StreamPayAPK",
+                                            getPlatform: function() { return "Android"; }
+                                        };
+                                    """.trimIndent(), null)
                                 }
 
                                 override fun onPageFinished(view: WebView?, url: String?) {
@@ -304,14 +331,23 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                     isWebLoading = false
                                     webProgress = 100
 
-                                    // Inject high-fidelity HTML5 video tracking bridge & user identity resolver
+                                    // Inject high-fidelity HTML5 video tracking bridge & user identity resolver safely
                                     view?.evaluateJavascript("""
                                         (function() {
+                                            window.StreamPayAPK = {
+                                                isAPK: true,
+                                                version: "1.0.1",
+                                                deviceInfo: "StreamPayAPK",
+                                                getPlatform: function() { return "Android"; }
+                                            };
+                                            
                                             if (window.videoBridgeInjected) {
                                                 try { window.tryResolveUserId(); } catch(e) {}
                                                 return;
                                             }
                                             window.videoBridgeInjected = true;
+                                            
+                                            var previousHasVideo = false;
 
                                             function tryResolveUserId() {
                                                 var userId = "";
@@ -347,9 +383,13 @@ fun WebViewScreen(viewModel: AppViewModel) {
 
                                             function notifyState(v) {
                                                 if (!v) {
-                                                    window.AndroidVideoBridge.onNoVideo();
+                                                    if (previousHasVideo) {
+                                                        previousHasVideo = false;
+                                                        window.AndroidVideoBridge.onNoVideo();
+                                                    }
                                                     return;
                                                 }
+                                                previousHasVideo = true;
                                                 var isPlaying = !v.paused && !v.ended;
                                                 window.AndroidVideoBridge.onVideoStateChanged(
                                                     getTrackedTitle(),
@@ -379,7 +419,10 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                                      setupVideoListeners(v);
                                                      notifyState(v);
                                                 } else {
-                                                     window.AndroidVideoBridge.onNoVideo();
+                                                     if (previousHasVideo) {
+                                                         previousHasVideo = false;
+                                                         window.AndroidVideoBridge.onNoVideo();
+                                                     }
                                                 }
                                             }, 1500);
                                         })();
@@ -395,6 +438,44 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                     super.onProgressChanged(view, newProgress)
                                     webProgress = newProgress
+                                }
+
+                                // Grant PWA requests for microphone and camera captures
+                                override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
+                                    if (request != null) {
+                                        try {
+                                            request.grant(request.resources)
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("WebViewScreen", "PermissionRequest grant error: ${e.message}", e)
+                                        }
+                                    }
+                                }
+
+                                // Open device system media / image picker when input type=file is clicked
+                                override fun onShowFileChooser(
+                                    webView: WebView?,
+                                    filePathCallback: android.webkit.ValueCallback<Array<android.net.Uri>>?,
+                                    fileChooserParams: FileChooserParams?
+                                ): Boolean {
+                                    if (uploadMessage != null) {
+                                        try {
+                                            uploadMessage?.onReceiveValue(null)
+                                        } catch (e: Exception) {}
+                                    }
+                                    uploadMessage = filePathCallback
+                                    
+                                    val mimeType = fileChooserParams?.acceptTypes?.firstOrNull()?.takeIf { it.isNotBlank() } ?: "*/*"
+                                    try {
+                                        filePickerLauncher.launch(mimeType)
+                                    } catch (e: Exception) {
+                                        android.util.Log.e("WebViewScreen", "Failed to launch file picker: ${e.message}", e)
+                                        try {
+                                            uploadMessage?.onReceiveValue(null)
+                                        } catch (ex: Exception) {}
+                                        uploadMessage = null
+                                        return false
+                                    }
+                                    return true
                                 }
 
                                 override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
@@ -474,28 +555,28 @@ fun WebViewScreen(viewModel: AppViewModel) {
                 )
             }
 
-            // Left Edge Capsule Handle (always visible for direct layout navigation on click)
+            // Right Edge Capsule Handle (always visible for direct layout navigation on click)
             Box(
                 modifier = Modifier
                     .width(42.dp)
                     .fillMaxHeight()
-                    .align(Alignment.CenterStart)
+                    .align(Alignment.CenterEnd)
             ) {
                 Box(
                     modifier = Modifier.align(Alignment.Center)
                 ) {
-                    // Subtle tactile capsule showing [>] indicator in center-left edge, clicking it directly opens the menu
+                    // Subtle tactile capsule showing [<] indicator in center-right edge, clicking it directly opens the menu
                     Box(
                         modifier = Modifier
                             .size(18.dp, 60.dp)
-                            .clip(RoundedCornerShape(0.dp, 12.dp, 12.dp, 0.dp))
+                            .clip(RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp))
                             .background(Indigo500.copy(alpha = 0.7f))
                             .clickable { isMenuOpen = true }
                             .testTag("fab_menu_button"),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.ArrowForward,
+                            imageVector = Icons.Default.ArrowBack,
                             contentDescription = "Abrir Menú",
                             tint = Color.White,
                             modifier = Modifier.size(14.dp)
@@ -509,8 +590,8 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                 .size(20.dp)
                                 .clip(CircleShape)
                                 .background(Red500)
-                                .align(Alignment.TopEnd)
-                                .offset(x = 10.dp, y = (-8).dp),
+                                .align(Alignment.TopStart)
+                                .offset(x = (-10).dp, y = (-8).dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
