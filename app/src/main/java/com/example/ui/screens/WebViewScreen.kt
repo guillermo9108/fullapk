@@ -136,8 +136,6 @@ fun WebViewScreen(viewModel: AppViewModel) {
                 WebViewCommand.CLEAR_CACHE -> {
                     try {
                         webViewRef?.clearCache(true)
-                        context.cacheDir?.deleteRecursively()
-                        context.externalCacheDir?.deleteRecursively()
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
@@ -229,28 +227,13 @@ fun WebViewScreen(viewModel: AppViewModel) {
             .fillMaxSize()
             .background(Slate950)
     ) {
-        if (customVideoView != null) {
-            // Fullscreen video rendering overlay (Overrides general layout)
-            AndroidView(
-                factory = { ctx ->
-                    FrameLayout(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        setBackgroundColor(AndroidColor.BLACK)
-                        
-                        // Detach customVideoView from any existing parent first to prevent crashes
-                        (customVideoView?.parent as? ViewGroup)?.removeView(customVideoView)
-                        
-                        addView(customVideoView)
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            // Web view content container
-            Column(modifier = Modifier.fillMaxSize()) {
+        // ALWAYS keep the Web view content container in the composition tree
+        // to prevent destruction and re-creation and avoid page reloads when exiting fullscreen
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (customVideoView != null) Modifier.size(0.dp) else Modifier)
+        ) {
                 // Inline micro progress bar
                 if (isWebLoading) {
                     Box(
@@ -429,6 +412,98 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                     """.trimIndent(), null)
                                 }
 
+                                override fun onReceivedError(
+                                    view: WebView?,
+                                    request: android.webkit.WebResourceRequest?,
+                                    error: android.webkit.WebResourceError?
+                                ) {
+                                    super.onReceivedError(view, request, error)
+                                    if (request?.isForMainFrame == true) {
+                                        val offlineHtml = """
+                                            <!DOCTYPE html>
+                                            <html>
+                                            <head>
+                                                <meta charset="utf-8">
+                                                <meta name="viewport" content="width=device-width, initial-scale=1">
+                                                <title>Sin Conexión - StreamPay</title>
+                                                <style>
+                                                    body {
+                                                        background-color: #0F172A;
+                                                        color: #F8FAFC;
+                                                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                                                        display: flex;
+                                                        flex-direction: column;
+                                                        justify-content: center;
+                                                        align-items: center;
+                                                        height: 100vh;
+                                                        margin: 0;
+                                                        padding: 24px;
+                                                        box-sizing: border-box;
+                                                        text-align: center;
+                                                    }
+                                                    .card {
+                                                        background-color: #1E293B;
+                                                        border-radius: 16px;
+                                                        padding: 32px;
+                                                        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+                                                        max-width: 400px;
+                                                        border: 1px solid #334155;
+                                                    }
+                                                    .icon {
+                                                        font-size: 64px;
+                                                        margin-bottom: 20px;
+                                                        animation: pulse 2s infinite;
+                                                    }
+                                                    h1 {
+                                                        font-size: 24px;
+                                                        margin: 0 0 12px 0;
+                                                        font-weight: 700;
+                                                    }
+                                                    p {
+                                                        font-size: 15px;
+                                                        color: #94A3B8;
+                                                        line-height: 1.6;
+                                                        margin: 0 0 32px 0;
+                                                    }
+                                                    .btn {
+                                                        background: linear-gradient(135deg, #6366F1 0%, #4F46E5 100%);
+                                                        color: white;
+                                                        border: none;
+                                                        padding: 14px 28px;
+                                                        font-size: 16px;
+                                                        font-weight: 600;
+                                                        border-radius: 9999px;
+                                                        cursor: pointer;
+                                                        box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+                                                        text-decoration: none;
+                                                        display: inline-block;
+                                                        transition: transform 0.15s ease, opacity 0.15s ease;
+                                                    }
+                                                    .btn:active {
+                                                        transform: scale(0.97);
+                                                        opacity: 0.9;
+                                                    }
+                                                    @keyframes pulse {
+                                                        0% { transform: scale(1); opacity: 0.9; }
+                                                        50% { transform: scale(1.05); opacity: 1; }
+                                                        100% { transform: scale(1); opacity: 0.9; }
+                                                    }
+                                                </style>
+                                            </head>
+                                            <body>
+                                                <div class="card">
+                                                    <div class="icon">📶</div>
+                                                    <h1>Sin Conectividad</h1>
+                                                    <p>No se pudo establecer conexión con StreamPay ni cargar datos de memoria en caché.<br><br>Por favor, conéctate a una red Wi-Fi / datos móviles, o vuelve a intentar cuando el servidor esté de nuevo en línea.</p>
+                                                    <button class="btn" onclick="window.location.reload()">Reintentar Conexión</button>
+                                                </div>
+                                            </body>
+                                            </html>
+                                        """.trimIndent()
+                                        view?.loadDataWithBaseURL(null, offlineHtml, "text/html", "UTF-8", null)
+                                    }
+                                }
+
                                 override fun onLoadResource(view: WebView?, url: String?) {
                                     super.onLoadResource(view, url)
                                 }
@@ -520,9 +595,10 @@ fun WebViewScreen(viewModel: AppViewModel) {
                                 allowFileAccess = true
                                 allowContentAccess = true
                                 
-                                // Use standard cache configuration depending on keepCache preference
+                                // Use standard cache configuration depending on keepCache preference and network connectivity
+                                val hasInternet = isNetworkAvailable(context)
                                 cacheMode = if (viewModel.serverConfig.keepCache) {
-                                    WebSettings.LOAD_DEFAULT
+                                    if (hasInternet) WebSettings.LOAD_DEFAULT else WebSettings.LOAD_CACHE_ELSE_NETWORK
                                 } else {
                                     WebSettings.LOAD_NO_CACHE
                                 }
@@ -552,6 +628,27 @@ fun WebViewScreen(viewModel: AppViewModel) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
+                )
+            }
+
+            if (customVideoView != null) {
+                // Fullscreen video rendering overlay (Overrides general layout visually)
+                AndroidView(
+                    factory = { ctx ->
+                        FrameLayout(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                            setBackgroundColor(AndroidColor.BLACK)
+                            
+                            // Detach customVideoView from any existing parent first to prevent crashes
+                            (customVideoView?.parent as? ViewGroup)?.removeView(customVideoView)
+                            
+                            addView(customVideoView)
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
                 )
             }
 
@@ -630,7 +727,6 @@ fun WebViewScreen(viewModel: AppViewModel) {
             }
         }
     }
-}
 
 @Composable
 fun StreamPayMenuOverlay(

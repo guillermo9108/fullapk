@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -243,6 +244,7 @@ fun DownloadsScreen(viewModel: AppViewModel) {
                             HistoricDownloadItemView(
                                 item = item,
                                 onDelete = { viewModel.deleteItem(item) },
+                                onOpen = { openDownloadedFile(context, item) },
                                 onTap = { selectedItemForDetail = item }
                             )
                         }
@@ -261,17 +263,22 @@ fun DownloadsScreen(viewModel: AppViewModel) {
         DownloadDetailsDialog(
             item = item,
             onClose = { selectedItemForDetail = null },
+            onOpen = { openDownloadedFile(context, item) },
             onShare = {
                 selectedItemForDetail = null
                 item.localUri?.let { path ->
                     val file = File(path)
                     if (file.exists()) {
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "video/*"
-                            putExtra(Intent.EXTRA_STREAM, Uri.fromFile(file))
+                            type = "*/*"
+                            putExtra(Intent.EXTRA_STREAM, androidx.core.content.FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                file
+                            ))
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Compartir video"))
+                        context.startActivity(Intent.createChooser(shareIntent, "Compartir archivo"))
                     }
                 }
             }
@@ -376,81 +383,207 @@ fun ActiveDownloadItemView(
 fun HistoricDownloadItemView(
     item: DownloadItem,
     onDelete: (DownloadItem) -> Unit,
+    onOpen: (DownloadItem) -> Unit,
     onTap: () -> Unit
 ) {
+    val context = LocalContext.current
     val isCompleted = item.status == "COMPLETED"
     val colorAccent = if (isCompleted) Color(0xFF10B981) else Color(0xFFEF4444) // Emerald vs Red
-    val icon = if (isCompleted) Icons.Default.Check else Icons.Default.Warning
+    val statusIcon = if (isCompleted) Icons.Default.Check else Icons.Default.Warning
+
+    val fileLocal = item.localUri?.let { File(it) }
+    val isFileAvailable = fileLocal?.exists() == true
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onTap() },
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Slate800),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(14.dp)
         ) {
-            // Completes/Fails visual badges
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(colorAccent.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = colorAccent,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+                // Thumbnail container
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Slate700),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isCompleted && isFileAvailable && item.localUri != null) {
+                        val extension = fileLocal.extension.lowercase()
+                        val isImage = extension in listOf("jpg", "jpeg", "png", "webp", "gif")
+                        
+                        if (isImage) {
+                            coil.compose.AsyncImage(
+                                model = coil.request.ImageRequest.Builder(LocalContext.current)
+                                    .data(fileLocal)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = "Miniatura",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                            )
+                        } else {
+                            val iconRes = when {
+                                extension in listOf("mp4", "mkv", "webm", "3gp") -> Icons.Default.PlayArrow
+                                extension in listOf("mp3", "wav", "ogg", "m4a") -> Icons.Default.PlayArrow
+                                else -> Icons.Default.Info
+                            }
+                            Icon(
+                                imageVector = iconRes,
+                                contentDescription = null,
+                                tint = Slate200,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    } else {
+                        Icon(
+                            imageVector = statusIcon,
+                            contentDescription = null,
+                            tint = colorAccent,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
 
-            Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.filename,
-                    color = Slate200,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (isCompleted) "Completado" else "Fallido",
-                        color = colorAccent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
+                        text = item.filename,
+                        color = Slate200,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "•", color = Slate700, fontSize = 11.sp)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = formatBytes(item.sizeBytes), color = Slate400, fontSize = 11.sp)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "•", color = Slate700, fontSize = 11.sp)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = formatRelativeTime(item.timestamp), color = Slate400, fontSize = 11.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = formatBytes(item.sizeBytes),
+                        color = Slate400,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = if (isCompleted) "Completado" else "Fallido",
+                            color = colorAccent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(text = "•", color = Slate700, fontSize = 11.sp)
+                        Text(
+                            text = formatRelativeTime(item.timestamp),
+                            color = Slate400,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
 
-            IconButton(
-                onClick = { onDelete(item) },
-                modifier = Modifier.size(36.dp)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Action row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Eliminar",
-                    tint = Slate400,
-                    modifier = Modifier.size(18.dp)
-                )
+                if (isCompleted && isFileAvailable) {
+                    androidx.compose.material3.Button(
+                        onClick = { onOpen(item) },
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = Indigo500
+                        ),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .height(34.dp)
+                            .testTag("open_file_${item.id}")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Abrir",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            val file = File(item.localUri!!)
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "*/*"
+                                putExtra(Intent.EXTRA_STREAM, androidx.core.content.FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    file
+                                ))
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(shareIntent, "Compartir archivo"))
+                        },
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Slate700),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = null,
+                                tint = Slate200,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "Compartir",
+                                color = Slate200,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                }
+
+                IconButton(
+                    onClick = { onDelete(item) },
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Eliminar",
+                        tint = Slate400,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
     }
@@ -461,6 +594,7 @@ fun HistoricDownloadItemView(
 fun DownloadDetailsDialog(
     item: DownloadItem,
     onClose: () -> Unit,
+    onOpen: () -> Unit,
     onShare: () -> Unit
 ) {
     val isCompleted = item.status == "COMPLETED"
@@ -514,7 +648,6 @@ fun DownloadDetailsDialog(
                     value = if (isCompleted) "Descargado con éxito" else "Descarga fallida",
                     valueColor = if (isCompleted) Color(0xFF10B981) else Color(0xFFEF4444)
                 )
-                DetailRow(label = "Url de descarga", value = item.url, maxLines = 2)
 
                 // Render system path if file exists natively
                 if (isCompleted && isFileAvailable && item.localUri != null) {
@@ -531,17 +664,32 @@ fun DownloadDetailsDialog(
                 HorizontalDivider(color = Slate700, thickness = 1.dp)
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Share / Player triggering
+                // Share / Play triggering
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (isCompleted && isFileAvailable) {
+                        androidx.compose.material3.TextButton(
+                            onClick = onOpen,
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Indigo500,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Abrir", color = Indigo500, fontWeight = FontWeight.Bold)
+                        }
+                        
                         IconButton(onClick = onShare) {
                             Icon(
                                 imageVector = Icons.Default.Share,
                                 contentDescription = "Compartir",
-                                tint = Indigo500
+                                tint = Slate400
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -595,6 +743,42 @@ fun formatBytes(bytes: Long): String {
     val i = kotlin.math.floor(kotlin.math.log(bytes.toDouble(), k)).toInt()
     if (i >= sizes.size) return "Large file"
     return String.format(Locale.US, "%.1f %s", bytes / java.lang.Math.pow(k, i.toDouble()), sizes[i])
+}
+
+// Function to open downloaded files natively with Intents
+private fun openDownloadedFile(context: android.content.Context, item: DownloadItem) {
+    val path = item.localUri ?: return
+    val file = File(path)
+    if (!file.exists()) {
+        android.widget.Toast.makeText(context, "El archivo físico no existe", android.widget.Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    try {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val ext = file.extension.lowercase()
+        val mimeType = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: when {
+            ext == "mp4" || ext == "mkv" || ext == "webm" || ext == "3gp" -> "video/*"
+            ext == "mp3" || ext == "wav" || ext == "ogg" || ext == "m4a" -> "audio/*"
+            ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "webp" || ext == "gif" -> "image/*"
+            ext == "pdf" -> "application/pdf"
+            ext == "apk" -> "application/vnd.android.package-archive"
+            else -> "*/*"
+        }
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "No se pudo abrir el archivo: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+    }
 }
 
 // Relative timestamp creator

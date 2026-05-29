@@ -118,8 +118,13 @@ class CustomDownloader(
                                 val subtype = contentType.substringAfter("image/").substringBefore(";").trim()
                                 if (subtype.isNotBlank() && subtype.length < 5) subtype else "jpg"
                             }
+                            contentType.startsWith("application/vnd.android.package-archive", ignoreCase = true) -> "apk"
                             else -> null
                         }
+                    }
+
+                    if (downloadUrl.substringBefore("?").endsWith(".apk", ignoreCase = true)) {
+                        ext = "apk"
                     }
 
                     if (disposition != null) {
@@ -147,13 +152,23 @@ class CustomDownloader(
                         finalFilename = "$baseName.$ext"
                     }
                     
+                    if (ext == "apk" && !finalFilename.lowercase().endsWith(".apk")) {
+                        val baseName = if (finalFilename.contains(".")) finalFilename.substringBeforeLast(".") else finalFilename
+                        finalFilename = "$baseName.apk"
+                    }
+                    
                     val totalSize = connection.contentLengthLong
                     val inputStream = connection.inputStream
      
                     // Determine destination directory based on ServerConfig
                     val serverConfig = com.example.data.pref.ServerConfig(context)
                     val destDir = if (serverConfig.downloadLocation == com.example.data.pref.ServerConfig.VAL_LOCATION_SD_CARD) {
-                        context.getExternalFilesDir(null) ?: context.filesDir
+                        val externalDirs = context.getExternalFilesDirs(null)
+                        if (externalDirs != null && externalDirs.size > 1 && externalDirs[1] != null) {
+                            externalDirs[1]
+                        } else {
+                            context.getExternalFilesDir(null) ?: context.filesDir
+                        }
                     } else {
                         context.filesDir
                     }
@@ -226,6 +241,25 @@ class CustomDownloader(
                         localUri = outputFile.absolutePath
                     )
                     downloadDao.insertDownload(completedItem)
+
+                    // Automatically request installation of completed APK download targets
+                    if (finalFilename.lowercase().endsWith(".apk")) {
+                        try {
+                            val installIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                val uri = androidx.core.content.FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    outputFile
+                                )
+                                setDataAndType(uri, "application/vnd.android.package-archive")
+                            }
+                            context.startActivity(installIntent)
+                        } catch (e: Exception) {
+                            Log.e("CustomDownloader", "Failed to launch package installer: ${e.message}", e)
+                        }
+                    }
                     
                 } catch (e: Exception) {
                     Log.e("CustomDownloader", "Download failure: ${e.message}", e)
@@ -249,7 +283,12 @@ class CustomDownloader(
                     try {
                         val serverConfig = com.example.data.pref.ServerConfig(context)
                         val destDir = if (serverConfig.downloadLocation == com.example.data.pref.ServerConfig.VAL_LOCATION_SD_CARD) {
-                            context.getExternalFilesDir(null) ?: context.filesDir
+                            val externalDirs = context.getExternalFilesDirs(null)
+                            if (externalDirs != null && externalDirs.size > 1 && externalDirs[1] != null) {
+                                externalDirs[1]
+                            } else {
+                                context.getExternalFilesDir(null) ?: context.filesDir
+                            }
                         } else {
                             context.filesDir
                         }

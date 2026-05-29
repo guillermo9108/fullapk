@@ -30,6 +30,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
+import android.net.Uri
+import android.provider.OpenableColumns
 import com.squareup.moshi.Moshi
 
 enum class Screen {
@@ -184,6 +190,158 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun navigateTo(screen: Screen) {
         _currentScreen.value = screen
+    }
+
+    // Shared media file URIs to propose for upload
+    private val _sharedFileUris = MutableStateFlow<List<Uri>>(emptyList())
+    val sharedFileUris: StateFlow<List<Uri>> = _sharedFileUris.asStateFlow()
+
+    val sharedFileUri: StateFlow<Uri?> = _sharedFileUris
+        .map { it.firstOrNull() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val _uploadStatus = MutableStateFlow<String?>(null)
+    val uploadStatus: StateFlow<String?> = _uploadStatus.asStateFlow()
+
+    fun handleSharedFiles(uris: List<Uri>) {
+        _sharedFileUris.value = uris
+        _uploadStatus.value = null // clear previous status
+    }
+
+    fun handleSharedFile(uri: Uri) {
+        handleSharedFiles(listOf(uri))
+    }
+
+    fun clearSharedFiles() {
+        _sharedFileUris.value = emptyList()
+        _uploadStatus.value = null
+    }
+
+    fun clearSharedFile() {
+        clearSharedFiles()
+    }
+
+    fun getFileNameAndSize(context: Context, uri: Uri): Pair<String, Long> {
+        var name = "archivo_compartido"
+        var size = 0L
+        try {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIdx != -1) {
+                        name = cursor.getString(nameIdx)
+                    }
+                    val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (sizeIdx != -1) {
+                        size = cursor.getLong(sizeIdx)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AppViewModel", "Failed to resolve shared name/size: ${e.message}", e)
+        }
+        return Pair(name, size)
+    }
+
+    fun uploadSharedFiles() {
+        val uris = _sharedFileUris.value
+        if (uris.isEmpty()) return
+        
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val contentResolver = context.contentResolver
+                
+                // Resolve user identification cookies to authenticate with the server
+                val cookies = try {
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        android.webkit.CookieManager.getInstance().getCookie(serverConfig.fullUrl) ?: ""
+                    }
+                } catch (e: Exception) {
+                    ""
+                }
+                
+                var userId = currentUserId
+                if (userId.isBlank()) {
+                    userId = serverConfig.lastSavedUserId
+                }
+
+                val totalCount = uris.size
+                for ((index, uri) in uris.withIndex()) {
+                    val fileNum = index + 1
+                    if (totalCount > 1) {
+                        _uploadStatus.value = "UPLOADING_PROGRESS:$fileNum:$totalCount"
+                    } else {
+                        _uploadStatus.value = "UPLOADING"
+                    }
+
+                    // Get filename and size
+                    val resolved = getFileNameAndSize(context, uri)
+                    var filename = resolved.first
+                    val mimeType = contentResolver.getType(uri) ?: "application/octet-stream"
+                    
+                    // If resolving didn't provide a valid extension, guess one
+                    if (!filename.contains(".")) {
+                        val ext = when {
+                            mimeType.startsWith("video/mp4") -> "mp4"
+                            mimeType.startsWith("video/") -> "mp4"
+                            mimeType.startsWith("image/png") -> "png"
+                            mimeType.startsWith("image/jpeg") -> "jpg"
+                            mimeType.startsWith("image/") -> "jpg"
+                            mimeType.startsWith("audio/mpeg") -> "mp3"
+                            mimeType.startsWith("audio/") -> "mp3"
+                            else -> "bin"
+                        }
+                        filename = "$filename.$ext"
+                    }
+
+                    // Read file content into a RequestBody
+                    val inputStream = contentResolver.openInputStream(uri) 
+                        ?: throw Exception("No se pudo leer el archivo: $filename")
+                    
+                    val bytes = inputStream.use { it.readBytes() }
+                    
+                    // Prepare multipart request body
+                    val mediaType = mimeType.toMediaTypeOrNull()
+                    val filePartBody = RequestBody.create(mediaType, bytes)
+
+                    val requestBody = MultipartBody.Builder()
+                        .setType(MultipartBody.FORM)
+                        .addFormDataPart("uploaded_file", filename, filePartBody)
+                        .addFormDataPart("userId", userId)
+                        .build()
+
+                    // Execute the POST request to the upload API
+                    val uploadUrl = "${serverConfig.fullUrl}/api/index.php?action=upload&userId=$userId"
+                    val request = Request.Builder()
+                        .url(uploadUrl)
+                        .post(requestBody)
+                        .header("Cookie", cookies)
+                        .header("User-Agent", "StreamPayAPK/1.0")
+                        .build()
+
+                    client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            throw Exception("Error en $filename (servidor: ${response.code})")
+                        }
+                    }
+                }
+
+                _uploadStatus.value = "SUCCESS"
+                delay(2000)
+                clearSharedFiles()
+                
+                // Reload standard page to show new media
+                _webViewCommands.emit(WebViewCommand.RELOAD)
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "Failed to upload shared media: ${e.message}", e)
+                _uploadStatus.value = "ERROR: ${e.localizedMessage ?: e.message}"
+            }
+        }
+    }
+
+    fun uploadSharedFile() {
+        uploadSharedFiles()
     }
 
     fun saveConfig(ip: String, port: String) {
